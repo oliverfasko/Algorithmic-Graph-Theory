@@ -48,62 +48,174 @@ Digraf nacitajSubor(const char *nazovSuboru) {
   return g;
 }
 
-void label_set_algoritmus(Digraf *graf, Vrchol zaciatocny_vrchol,
-                          Vrchol konecny_vrchol) {
+// --- Adjacency list: pre kazdy vrchol zoznam hran ktore z neho vychadzaju ---
+ 
+typedef struct {
+  Hrana *hrany;        // pole hran vychadzajucich z tohto vrcholu
+  int   pocetHran;     // kolko hran aktualne obsahuje
+  int   kapacita;      // alokovana kapacita
+} ZoznamHranVrcholu;
+ 
+ZoznamHranVrcholu *postavAdjacencyList(Digraf *graf) {
+  int pocetVrcholov = graf->pocetVrcholov;
+ 
 
-  int pocet_vrcholov = graf->pocetVrcholov;
+  // for (vsetky hrany grafu) {        
+  //  if (hrana nevychádza z r) continue;
+  ZoznamHranVrcholu *adjacencyList = calloc(pocetVrcholov + 1, sizeof(ZoznamHranVrcholu));
+ 
+  for (int poradieHrany = 0; poradieHrany < graf->pocetHran; poradieHrany++) {
+    Hrana aktualnaHrana = graf->orHrany[poradieHrany];
+    int zdrojVrchol = aktualnaHrana.u.cislo;
+ 
+    ZoznamHranVrcholu *zoznam = &adjacencyList[zdrojVrchol];
+ 
+    // Zdvojnasob kapacitu ak je zoznam plny
+    if (zoznam->pocetHran == zoznam->kapacita) {
+      zoznam->kapacita = zoznam->kapacita == 0 ? 4 : zoznam->kapacita * 2;
+      zoznam->hrany = realloc(zoznam->hrany, zoznam->kapacita * sizeof(Hrana));
+    }
+ 
+    zoznam->hrany[zoznam->pocetHran++] = aktualnaHrana;
+  }
+ 
+  return adjacencyList;
+}
 
-  int t[pocet_vrcholov + 1]; // vzdialenost
-  bool v_mnozine_E[pocet_vrcholov + 1];
+void uvolniAdjacencyList(ZoznamHranVrcholu *adjacencyList, int pocetVrcholov) {
+  for (int idx = 1; idx <= pocetVrcholov; idx++) {
+    free(adjacencyList[idx].hrany);
+  }
+  free(adjacencyList);
+}
 
-  for (int i = 0; i <= pocet_vrcholov; i++) {
-    t[i] = 9999;
-    v_mnozine_E[i] = false;
+// --- Pomocne funkcie pre mnozinu epsilon (dynamicke pole) ---
+
+int epsilon_obsahuje(int *epsilon, int velkostEpsilon, int cisloVrcholu) {
+  for (int idx = 0; idx < velkostEpsilon; idx++) {
+    if (epsilon[idx] == cisloVrcholu)
+      return 1;
+  }
+  return 0;
+}
+
+void epsilon_pridaj(int **epsilon, int *velkostEpsilon, int cisloVrcholu) {
+  if (epsilon_obsahuje(*epsilon, *velkostEpsilon, cisloVrcholu))
+    return;
+  (*velkostEpsilon)++;
+  *epsilon = realloc(*epsilon, (*velkostEpsilon) * sizeof(int));
+  (*epsilon)[*velkostEpsilon - 1] = cisloVrcholu;
+}
+
+void epsilon_odstran(int **epsilon, int *velkostEpsilon, int cisloVrcholu) {
+  for (int idx = 0; idx < *velkostEpsilon; idx++) {
+    if ((*epsilon)[idx] == cisloVrcholu) {
+      (*epsilon)[idx] = (*epsilon)[*velkostEpsilon - 1];
+      (*velkostEpsilon)--;
+      *epsilon = realloc(*epsilon, (*velkostEpsilon) * sizeof(int));
+      return;
+    }
+  }
+}
+
+// ---------------------------------------
+// Label Set
+// ---------------------------------------
+
+void label_set_algoritmus(Digraf *graf, Vrchol zaciatocnyVrchol,
+                          Vrchol konecnyVrchol) {
+
+  int pocetVrcholov = graf->pocetVrcholov;
+
+  ZoznamHranVrcholu *adjacencyList = postavAdjacencyList(graf); // v jave Hashmap<Int ,List<Hrana>>
+
+  int vzdialenost[pocetVrcholov + 1]; // najkratsia znama vzdialenost z pociatku
+  int predchodca[pocetVrcholov+ 1]; // predchadzajuci vrchol na najkratsej ceste
+
+  for (int idx = 0; idx <= pocetVrcholov; idx++) {
+    vzdialenost[idx] = 9999;
+    predchodca[idx] = -1;
   }
 
-  t[zaciatocny_vrchol.cislo] = 0;
-  v_mnozine_E[zaciatocny_vrchol.cislo] = true;
+  vzdialenost[zaciatocnyVrchol.cislo] = 0;
 
-  printf("Startovaci vrchol: %d, Cielovy vrchol: %d\n\n",
-         zaciatocny_vrchol.cislo, konecny_vrchol.cislo);
+  int *epsilon = malloc(sizeof(int));
+  int velkostEpsilon = 0;
+  epsilon_pridaj(&epsilon, &velkostEpsilon, zaciatocnyVrchol.cislo);
 
   int krok = 0;
 
-  // ideme pokial konecny vrchol nebude v Epsilon 
-  while (!v_mnozine_E[konecny_vrchol.cislo]) {
+  while (velkostEpsilon > 0) {
     krok++;
 
-    // ak je vrchol u v Epsilon a cesta z u do v je kratsia ako doteraz tak nastavime t[v]
-    for (int h = 0; h < graf->pocetHran; h++) {
-      Hrana hrana = graf->orHrany[h];
-      int u = hrana.u.cislo;
-      int v = hrana.v.cislo;
-      int c = hrana.c;
-
-      if (v_mnozine_E[u] && t[u] + c < t[v]) {
-        t[v] = t[u] + c;
+    // Z epsilonu vyberieme riadiaci vrchol s najmensou vzdialenostou
+    int minVzdialenost = 9999;
+    int riadiaciVrchol = -1;
+    for (int idx = 0; idx < velkostEpsilon; idx++) {
+      if (vzdialenost[epsilon[idx]] < minVzdialenost) { 
+        minVzdialenost = vzdialenost[epsilon[idx]];
+        riadiaciVrchol = epsilon[idx];
       }
     }
 
-    // z vrcholov ktore nie su v Epsilon, vyberieme ten s najmensou vzdialenostou a pridame do Epislon
-    int min_t = 9999;
-    int novy_vrchol = -1;
+    epsilon_odstran(&epsilon, &velkostEpsilon, riadiaciVrchol);
 
-    for (int i = 1; i <= pocet_vrcholov; i++) {
-      if (!v_mnozine_E[i] && t[i] < min_t) {
-        min_t = t[i];
-        novy_vrchol = i;
+
+    // vypis kroku
+    printf("Krok %d: riadiaci=%d, vzdialenost=%d, epsilon={", krok, riadiaciVrchol, minVzdialenost);
+
+    for (int idx = 0; idx < velkostEpsilon; idx++)
+      printf(idx < velkostEpsilon - 1 ? "%d," : "%d", epsilon[idx]);
+
+    printf("}\n");
+
+    // Kontrola hran vychadzajucich z riadiaceho vrcholu
+    ZoznamHranVrcholu *hranyRiadiaceho = &adjacencyList[riadiaciVrchol];
+
+    // for (hrany tohto vrcholu)
+    for (int poradieHrany = 0; poradieHrany < hranyRiadiaceho->pocetHran; poradieHrany++) {
+      Hrana aktualnaHrana = hranyRiadiaceho->hrany[poradieHrany]; //napr 5
+ 
+      int susednyVrchol   = aktualnaHrana.v.cislo; //napr 2
+      int cenaHrany       = aktualnaHrana.c; // napr 20
+      int novaVzdialenost = vzdialenost[riadiaciVrchol] + cenaHrany; // napr 0 + 20
+ 
+      // Zlepsi sa label susedneho vrcholu?
+      if (vzdialenost[susednyVrchol] > novaVzdialenost) { //napr 9999 > 20 -> TRUE
+        vzdialenost[susednyVrchol] = novaVzdialenost; //napr 9999 sa prepise na 20
+        predchodca[susednyVrchol]  = riadiaciVrchol; // napr z 5 sme prisli do 2
+ 
+        // Pridame do epsilonu len ak tam este nie je
+        epsilon_pridaj(&epsilon, &velkostEpsilon, susednyVrchol); //napr E = {2}
       }
     }
+  }
+   
+  free(epsilon);
+  uvolniAdjacencyList(adjacencyList, pocetVrcholov);
 
-    v_mnozine_E[novy_vrchol] = true;
 
-    printf("Krok %d: vrchol %d pridany do Epsilon, t=%d\n", krok, novy_vrchol, min_t);
+  // vypis cety konecnej vzdialenosti 
+  printf("\nNajkratsia vzdialenost z %d do %d je %d\n", zaciatocnyVrchol.cislo,
+         konecnyVrchol.cislo, vzdialenost[konecnyVrchol.cislo]); 
+
+  // vypis cesty spetne cez predchodcov
+  int cesta[pocetVrcholov + 1];
+  int dlzkaCesty = 0;
+  int aktualnyVrchol = konecnyVrchol.cislo;
+
+  while (aktualnyVrchol != -1) {
+    cesta[dlzkaCesty++] = aktualnyVrchol;
+    aktualnyVrchol = predchodca[aktualnyVrchol];
   }
 
-  // Výsledok
-  printf("\nNajkratsia vzdialenost z %d do %d je %d\n", zaciatocny_vrchol.cislo,
-         konecny_vrchol.cislo, t[konecny_vrchol.cislo]);
+  printf("Cesta: ");
+  for (int idx = dlzkaCesty - 1; idx >= 0; idx--) {
+    if (idx > 0)
+      printf("%d -> ", cesta[idx]);
+    else
+      printf("%d\n", cesta[idx]);
+  }
 }
 
 // hlavna funkcia
